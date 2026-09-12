@@ -3,8 +3,9 @@
 ## 1.1.0 – 2026-09-13
 
 - Renamed to **disguise-session** (listed as "Disguise: Session API", default label `d3-session`) to follow the
-  naming of the other disguise modules, as suggested by the Companion maintainers. Connections created as
-  `disguise-designer-show-control` or `disguise-api` are migrated automatically.
+  naming of the other disguise modules, as suggested by the Companion maintainers. The earlier ids are listed as legacy ids; a
+  connection created with a pre-release id may still have to be re-added (Companion 5.0.5 did not migrate a
+  developer-folder module).
 
 ## 1.0.1 – 2026-09-12
 
