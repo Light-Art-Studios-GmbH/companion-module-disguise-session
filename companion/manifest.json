@@ -1,0 +1,28 @@
+{
+	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
+	"type": "connection",
+	"id": "disguise-session",
+	"name": "disguise-session",
+	"shortname": "d3-session",
+	"description": "Designer Show Control: controls disguise Designer through the session API – transports, sections, cues, timecode, master fade, layers, machine health and failover",
+	"version": "1.1.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/Light-Art-Studios-GmbH/companion-module-disguise-session.git",
+	"bugs": "https://github.com/Light-Art-Studios-GmbH/companion-module-disguise-session/issues",
+	"maintainers": [
+		{
+			"name": "Lucas Hoyer (Light Art Studios GmbH)",
+			"email": "lh@lightartstudios.de"
+		}
+	],
+	"legacyIds": ["disguise-api", "disguise-designer-show-control"],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "2.1.3",
+		"entrypoint": "../src/main.mjs"
+	},
+	"manufacturer": "Disguise",
+	"products": ["Session API"],
+	"keywords": ["disguise", "d3", "Designer", "Session API", "Show Control", "Transport", "Timecode", "Cue", "Failover"]
+}

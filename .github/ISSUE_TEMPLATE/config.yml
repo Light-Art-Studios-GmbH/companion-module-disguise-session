@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Light-Art-Studios-GmbH/companion-module-disguise-session/wiki
+    about: Setup, features, variables, feedbacks and presets are described in the wiki.
