@@ -511,9 +511,10 @@ class DisguiseInstance extends InstanceBase {
 				)
 			} catch (e) {
 				const msg = e?.message || String(e)
-				if (this.session.connected || full) this.log('error', `${this.activeHost}: not reachable: ${msg}`)
+				const failure = await this.describeFailure(msg)
+				if (this.session.connected || full) this.log('error', `${this.activeHost}: ${failure.log}`)
 				this.session.connected = false
-				this.updateStatus(InstanceStatus.ConnectionFailure, msg)
+				this.updateStatus(InstanceStatus.ConnectionFailure, failure.status)
 				this.publishGlobals()
 				this.checkFeedbacks('connected')
 			} finally {
@@ -522,6 +523,29 @@ class DisguiseInstance extends InstanceBase {
 			await this.checkHosts()
 		})()
 		return this.refreshing
+	}
+
+	/**
+	 * Turns a refresh error into a log line and a status text. A timeout on a /transport/ call while a small status
+	 * call still answers means that small responses arrive and large ones do not – an MTU problem on the network path
+	 * (reported from the field: the transport list needs several full-size packets, the project status only one).
+	 * @param {string} msg
+	 * @returns {Promise<{log:string, status:string}>}
+	 */
+	async describeFailure(msg) {
+		const plain = { log: `not reachable: ${msg}`, status: msg }
+		if (!/\/transport\/.*timeout/i.test(msg) || !this.api) return plain
+		try {
+			await this.api.getProject()
+		} catch {
+			return plain
+		}
+		return {
+			log:
+				`reached the Director (status calls answer), but ${msg}. Small responses arrive, large ones do not – ` +
+				'this usually is an MTU problem on the network path. See Troubleshooting in the module help.',
+			status: 'Director reachable, large responses time out – check MTU',
+		}
 	}
 
 	/**

@@ -1,6 +1,6 @@
 {
 	"name": "companion-module-disguise-session",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Bitfocus Companion module \"Disguise: Session API\" (Designer Show Control) – controls disguise Designer through the session API: transports, sections, cues, timecode, master fade, layers, machine health and failover.",
 	"main": "src/main.mjs",
 	"license": "MIT",

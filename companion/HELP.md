@@ -134,3 +134,25 @@ _Session / Director_ (status, where commands go, Director and backup host, maste
 (control, displays and warnings, big digits, timecode input, cues and jumps, volume and brightness, new layers,
 layer clipboard, selected layer, sections / tags / time, take note), one control group per multitransport and one
 full group per transport.
+
+### Troubleshooting
+
+**The module is not in Companion's module list** – it has not been added to the official list yet. Until then, add it
+through Companion's developer modules folder or import the package from the GitHub release.
+
+**Timeout on `/transport/…` although the Director is reachable** (status "Director reachable, large responses time
+out – check MTU"). The module reaches the Director, but larger answers never arrive. Small responses (project, session status) fit
+into one network packet; the transport and track lists do not. If the network path cannot carry packets of the
+configured MTU size, exactly these larger responses are lost – it looks like a hanging API, but it is an MTU
+problem. Test it from the Companion machine with a ping that must not be fragmented:
+
+```
+macOS:    ping -D -s 1472 <director-ip>
+Linux:    ping -M do -s 1472 <director-ip>
+Windows:  ping -f -l 1472 <director-ip>
+```
+
+1472 bytes of payload make a full 1500-byte packet. If this ping fails while a smaller one (for example 1400)
+works, the path does not carry the MTU your interface is set to. Set the MTU consistently on all devices in the
+path – Companion machine, switches, Director. Enabling jumbo frames along the whole path can help as well;
+otherwise lower the MTU on the Companion machine's interface until the ping passes.

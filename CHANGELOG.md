@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 – 2026-09-20
+
+- Clearer diagnosis when the Director answers small status calls but `/transport/…` responses time out: the log and
+  the connection status now point to an MTU problem on the network path.
+- Troubleshooting section in the help, README and wiki (MTU test with a non-fragmenting ping, jumbo frames), and
+  install notes while the module is not in Companion's official list.
+
 ## 1.1.0 – 2026-09-13
 
 - Renamed to **disguise-session** (listed as "Disguise: Session API", default label `d3-session`) to follow the

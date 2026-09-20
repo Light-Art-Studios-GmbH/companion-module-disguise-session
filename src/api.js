@@ -37,16 +37,27 @@ class DisguiseApi {
 	 */
 	async request(path, init) {
 		const url = this.base + path
+		const fail = (e) => {
+			const reason =
+				e?.name === 'TimeoutError' || e?.name === 'AbortError'
+					? `timeout after ${this.timeoutMs} ms`
+					: e?.cause?.code || e?.message || String(e)
+			return new Error(`${init?.method || 'GET'} ${path}: ${reason}`, { cause: e })
+		}
 		let res
 		try {
 			res = await fetch(url, { ...init, signal: AbortSignal.timeout(this.timeoutMs) })
 		} catch (e) {
-			const reason =
-				e?.name === 'TimeoutError' ? `timeout after ${this.timeoutMs} ms` : e?.cause?.code || e?.message || String(e)
-			throw new Error(`${init?.method || 'GET'} ${path}: ${reason}`, { cause: e })
+			throw fail(e)
 		}
 		if (!res.ok) throw new Error(`${init?.method || 'GET'} ${path}: HTTP ${res.status}`)
-		const json = await res.json()
+		let json
+		try {
+			// the body of a large response can stall after the headers arrived (see describeFailure in instance.js)
+			json = await res.json()
+		} catch (e) {
+			throw fail(e)
+		}
 		if (json?.status && json.status.code !== 0) {
 			const details =
 				Array.isArray(json.status.details) && json.status.details.length

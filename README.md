@@ -51,8 +51,10 @@ A longer tour of every feature is in the
 
 ## Installation
 
-Install the module from Companion's module store, or drop the packaged module into Companion's
-developer modules folder (`npm run package` builds it into `pkg/`).
+The module is not in Companion's official module list yet. Until it is, download the package from the
+[latest release](https://github.com/Light-Art-Studios-GmbH/companion-module-disguise-session/releases/latest) and
+import it in Companion (Modules → Import module package), or put the module into Companion's developer modules
+folder. Tested with Companion on macOS, Linux and Windows.
 
 ## Configuration
 
@@ -108,6 +110,12 @@ of the test project. Icons are drawn by `scripts/draw-icons.py` (Pillow) and emb
 
 - **Connection stays red** – the session API only answers while Designer is running on the Director; check
   `http://<director>/api/session/status/project` in a browser.
+- **Timeout on `/transport/…` although the Director is reachable** – small responses arrive, large ones do not:
+  an MTU problem on the network path. Test with a non-fragmenting ping from the Companion machine
+  (`ping -D -s 1472 <ip>` on macOS, `ping -M do -s 1472 <ip>` on Linux, `ping -f -l 1472 <ip>` on Windows). If it
+  fails while 1400 works, set the MTU consistently along the path (enabling jumbo frames everywhere can help) or
+  lower it on the Companion machine. Details in the
+  [wiki](https://github.com/Light-Art-Studios-GmbH/companion-module-disguise-session/wiki/Troubleshooting).
 - **Variables do not move** – the Live Update websocket is blocked or Designer is an Actor; the log shows
   "Live Update connected" when it works.
 - **Failover tiles missing** – the Director lists no understudy targets; after a replace, restart the
