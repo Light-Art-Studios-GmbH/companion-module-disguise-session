@@ -1501,6 +1501,18 @@ class DisguiseInstance extends InstanceBase {
 		this.checkFeedbacks('master_output')
 	}
 
+	/**
+	 * Save and backup the project on the host the commands go to.
+	 * interactive = d3.saveAndBackupInteractive() (the same as Alt+W, shows the confirmation in Designer);
+	 * silent = d3.saveAndBackup() (what Designer's autosave calls).
+	 * @param {unknown} mode 'interactive' | 'silent'
+	 */
+	async saveProject(mode) {
+		const fn = String(mode || 'interactive') === 'silent' ? 'saveAndBackup' : 'saveAndBackupInteractive'
+		await this.pyOnce(`str(${D3}.${fn}())`)
+		this.log('info', `Project saved and backed up (${fn === 'saveAndBackup' ? 'silent' : 'interactive'})`)
+	}
+
 	/** @param {unknown} seconds */
 	async setFadeDuration(seconds) {
 		const n = Number(String(seconds ?? '').replace(',', '.'))

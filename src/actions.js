@@ -351,6 +351,23 @@ function getActionDefinitions(instance) {
 			],
 			callback: (a) => instance.run(`Master ${a.options.mode}`, () => instance.masterFade(a.options.mode)),
 		},
+		save_project: {
+			name: 'Project: save and backup',
+			description: "Designer's save and backup of the project file (the same as Alt+W).",
+			options: [
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Save mode',
+					default: 'interactive',
+					choices: [
+						{ id: 'interactive', label: 'Interactive (like Alt+W, shows the confirmation in Designer)' },
+						{ id: 'silent', label: 'Silent (like autosave, no confirmation)' },
+					],
+				},
+			],
+			callback: (a) => instance.run(`Save project (${a.options.mode})`, () => instance.saveProject(a.options.mode)),
+		},
 		set_fade_duration: {
 			name: 'Master: set fade duration',
 			options: [{ id: 'seconds', type: 'textinput', label: 'Seconds', default: '0.75', useVariables: true }],

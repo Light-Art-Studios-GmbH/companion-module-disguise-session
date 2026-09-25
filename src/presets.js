@@ -369,6 +369,18 @@ function getPresetDefinitions(instance) {
 				feedbacks: [{ feedbackId: 'master_output', options: { mode: 'hold' }, bg: AMBER }],
 			}),
 		),
+		add(
+			'save_project',
+			tile({
+				name: 'Project: save and backup (Alt+W; mode in the action)',
+				header: 'Project',
+				main: 'Save',
+				mainSize: 48,
+				footer: g('project'),
+				bg: PANEL,
+				actions: [{ actionId: 'save_project', options: { mode: 'interactive' } }],
+			}),
+		),
 	]
 	structure.push({
 		id: 'session',

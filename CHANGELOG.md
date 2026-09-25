@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 – 2026-09-25
+
+- New action **Project: save and backup** – saves the project and writes a backup, like Alt+W in Designer. Save mode
+  _Interactive_ (shows Designer's confirmation, the same as Alt+W) or _Silent_ (the same as Designer's autosave).
+- New preset **Save** in the Session group.
+
 ## 1.1.1 – 2026-09-20
 
 - Clearer diagnosis when the Director answers small status calls but `/transport/…` responses time out: the log and

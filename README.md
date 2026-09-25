@@ -11,7 +11,7 @@ would reach for during a show.
   go to section, cue, note, tag, track or timecode, engage, volume and brightness.
 - Frame-accurate variables per transport: playhead and section time as `HH:MM:SS:FF` and single digits,
   current and next section, current and next cue, incoming timecode.
-- Master fade up / down / hold, timecode source and matching indicator, warnings before the end of a
+- Master fade up / down / hold, save and backup of the project (Alt+W), timecode source and matching indicator, warnings before the end of a
   section or track.
 - Machine health per machine with acknowledgeable alerts, Director + backup host with automatic follow,
   failover replace / restore that also works when the Director is already gone.

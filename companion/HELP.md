@@ -49,6 +49,12 @@ section and track, engage / disengage, volume and brightness (set or adjust, als
 _Master: fade down / fade up / hold_ switches Designer's master output using the project's fade duration;
 _Master: set fade duration_ changes it. The master tile toggles between fade up and fade down and shows the state.
 
+### Saving the project
+
+_Project: save and backup_ saves the project file and writes a backup, like Alt+W in Designer. The save mode is chosen
+in the action: _Interactive_ shows Designer's confirmation on screen (the same as Alt+W), _Silent_ saves without a
+confirmation (the same as Designer's autosave). The _Save_ tile in the Session group uses the interactive mode.
+
 ### Machines and failover
 
 Each machine of the session has health variables (`m_<machine>_…`: role, state, problems, fps, dropped frames,
