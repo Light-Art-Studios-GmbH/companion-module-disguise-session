@@ -41,6 +41,10 @@ const REQUEST_TIMEOUT_MS = 4000
 const POLL_MS = 10000
 /** Live Update interval: 40 ms = 25 updates/s, frame-accurate timecode variables. */
 const LIVE_UPDATE_MS = 40
+/** A transport whose Live Update subscription has not delivered its playhead for this long is subscribed again. */
+const LIVE_RESUBSCRIBE_MS = 5000
+/** Live Update closed this long while REST answers: restart the websocket client (second safety net). */
+const LIVE_RESTART_MS = 15000
 /** Live Update playMode.state → API play mode (verified on r34). */
 const STATE_TO_MODE = { 0: 'Play', 1: 'PlaySection', 2: 'Loop', 3: 'Stop' }
 const STATE_FEEDBACKS = [
@@ -87,6 +91,10 @@ const ACTIVE_KEY = 'active'
  * @property {number} tcIncomingSeconds incoming timecode in seconds (-1 = none)
  * @property {tc.Clock|undefined} smpteClock timecode format reported by the Director
  * @property {tc.Clock|undefined} rateClock timeline refresh rate (fallback)
+ * @property {boolean} liveOk the current Live Update subscription has delivered the playhead (Designer only sends
+ *   changes, so a stopped transport sends its time once – the age of the last value says nothing)
+ * @property {number} liveLostAt when liveOk last became false (ms)
+ * @property {number} resubAt last watchdog resubscribe (ms)
  * @property {number} lastFrame
  * @property {string} lastPosKey
  */
@@ -267,6 +275,8 @@ class DisguiseInstance extends InstanceBase {
 	useHost(key) {
 		if (this.live) this.live.stop()
 		this.live = null
+		this.liveDownSince = 0
+		this.markLiveLost()
 		this.api = null
 		this.activeHostKey = key
 		const host = this.activeHost
@@ -276,14 +286,29 @@ class DisguiseInstance extends InstanceBase {
 		this.api = new DisguiseApi({ host, port, timeoutMs: REQUEST_TIMEOUT_MS, log })
 		const live = new LiveUpdate({ host, port, updateMs: LIVE_UPDATE_MS, log })
 		live.on('update', (u) => this.guard('live update', () => this.onLive(u)))
+		let openedBefore = false
 		live.on('open', () => {
+			if (this.destroyed || this.live !== live) return
 			this.log('info', `Live Update connected (${host})`)
+			this.liveDownSince = 0
+			this.markLiveLost()
 			this.refreshStatus()
+			// a re-open usually follows a Designer restart: transports, tracks and sections may have changed
+			if (openedBefore) this.guard('refresh after reconnect', () => this.refreshSession(true))
+			openedBefore = true
 		})
 		live.on('close', (reason) => {
 			if (this.destroyed || this.live !== live) return
-			if (this.session.connected) this.log('warn', `Live Update closed (${reason}), reconnecting …`)
+			if (!this.liveDownSince) {
+				this.liveDownSince = Date.now()
+				if (this.session.connected) this.log('warn', `Live Update closed (${reason}), reconnecting …`)
+			}
+			this.markLiveLost()
 			this.refreshStatus()
+		})
+		live.on('refused', (objectPath) => {
+			if (this.destroyed || this.live !== live) return
+			this.log('warn', `Live Update: ${objectPath} is not available yet (project loading?) – retrying`)
 		})
 		live.on('error', (msg) => {
 			if (this.loggedLiveErrors.has(msg)) return
@@ -293,6 +318,50 @@ class DisguiseInstance extends InstanceBase {
 		this.live = live
 		this.session.connected = false
 		this.publishGlobals()
+	}
+
+	/** Marks every transport's playhead as not live (socket closed or (re)opened, subscriptions pending). */
+	markLiveLost() {
+		const now = Date.now()
+		for (const t of this.transports.values()) {
+			if (t.liveOk) t.liveLostAt = now
+			t.liveOk = false
+		}
+	}
+
+	/** True when the transport's playhead comes from the current Live Update subscription. @param {TransportState} t */
+	hasLivePlayhead(t) {
+		return !!(t && t.liveOk && this.live?.connected)
+	}
+
+	/**
+	 * Edit tools write at the playhead – refuse instead of writing at a stale position.
+	 * @param {TransportState} t
+	 */
+	requireLivePlayhead(t) {
+		if (!this.hasLivePlayhead(t))
+			throw new Error(`no live playhead for ${t?.name || 'the transport'} – Live Update is reconnecting, try again`)
+	}
+
+	/** Watchdog (500 ms): resubscribe transports whose playhead does not arrive, restart a hanging websocket. */
+	checkLive() {
+		const live = this.live
+		if (!live || this.destroyed) return
+		const now = Date.now()
+		if (live.connected) {
+			for (const t of this.transports.values()) {
+				if (t.liveOk || now - t.liveLostAt < LIVE_RESUBSCRIBE_MS || now - t.resubAt < 2 * LIVE_RESUBSCRIBE_MS) continue
+				t.resubAt = now
+				t.liveLostAt = now
+				this.log('warn', `Live Update: no playhead from ${t.name} – subscribing again`)
+				live.resubscribe(`transportmanager:${objectPathName(t.name)}`)
+			}
+		} else if (this.session.connected && this.liveDownSince && now - this.liveDownSince > LIVE_RESTART_MS) {
+			this.liveDownSince = now
+			this.log('warn', 'Live Update did not come back although the Director answers – restarting the websocket')
+			live.stop()
+			live.start()
+		}
 	}
 
 	/**
@@ -377,6 +446,7 @@ class DisguiseInstance extends InstanceBase {
 	tickBlink() {
 		this.blinkOn = !this.blinkOn
 		this.checkFeedbacks(...TIMED_FEEDBACKS)
+		this.checkLive()
 	}
 
 	/** Stops timers and sockets. Safe to call twice. */
@@ -391,6 +461,7 @@ class DisguiseInstance extends InstanceBase {
 			this.live.removeAllListeners()
 			this.live.stop()
 		}
+		this.liveDownSince = 0
 		this.live = null
 		this.api = null
 		this.session.connected = false
@@ -778,6 +849,9 @@ class DisguiseInstance extends InstanceBase {
 			rateClock: undefined,
 			lastFrame: -1,
 			lastPosKey: '',
+			liveOk: false,
+			liveLostAt: Date.now(),
+			resubAt: 0,
 		}
 	}
 
@@ -1130,7 +1204,10 @@ class DisguiseInstance extends InstanceBase {
 		const v = u.values
 		let stateChanged = false
 		let trackChanged = false
-		if ('time' in v) t.time = Number(v.time) || 0
+		if ('time' in v) {
+			t.time = Number(v.time) || 0
+			t.liveOk = true
+		}
 		if ('playing' in v && t.playing !== !!v.playing) {
 			t.playing = !!v.playing
 			stateChanged = true
@@ -1569,8 +1646,9 @@ class DisguiseInstance extends InstanceBase {
 		for (const t of targets) {
 			const objectPath = this.editObjectPath(t)
 			const d = this.derived(t)
-			const start =
-				o.start !== undefined && String(o.start).trim() !== '' ? tc.parseTime(o.start, this.clockFor(t)) : t.time
+			const atPlayhead = o.start === undefined || String(o.start).trim() === ''
+			if (atPlayhead || o.toSectionEnd) this.requireLivePlayhead(t)
+			const start = atPlayhead ? t.time : tc.parseTime(o.start, this.clockFor(t))
 			if (start === undefined) throw new Error(`"${o.start}" is not a time`)
 			let length = Number(String(o.length ?? '').replace(',', '.'))
 			if (o.toSectionEnd) length = Math.max(0.04, d.remaining)
@@ -1699,6 +1777,7 @@ class DisguiseInstance extends InstanceBase {
 				this.log('warn', 'Paste: nothing copied or cut yet')
 				return
 			}
+			this.requireLivePlayhead(t)
 			const time = Number(t.time)
 			const names = `[${clip.names.map((n) => pyStr(n)).join(', ')}]`
 			const expr =
@@ -1778,6 +1857,7 @@ class DisguiseInstance extends InstanceBase {
 		if (!Number.isFinite(from) || !Number.isFinite(to))
 			throw new Error(`values "${o.from}" / "${o.to}" are not numbers`)
 		const anchor = String(o.anchor || 'start')
+		if (anchor === 'playhead') this.requireLivePlayhead(t)
 		const bps = 'object.player.track.bpm / 60.0'
 		const fs = `l.findSequence(${pyStr(prop.field)})`
 		const seq = `${fs}.sequence`
@@ -1916,10 +1996,10 @@ class DisguiseInstance extends InstanceBase {
 		const values = {
 			datetime: now.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }),
 			time: now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-			timecode: ctx ? tc.toTimecode(ctx.t.time, this.clockFor(ctx.t)) : '',
+			timecode: ctx && this.hasLivePlayhead(ctx.t) ? tc.toTimecode(ctx.t.time, this.clockFor(ctx.t)) : '',
 			transport: ctx ? ctx.t.name : '',
 			track: ctx ? ctx.t.trackName : '',
-			section: d?.section ? d.section.text : '',
+			section: d?.section && this.hasLivePlayhead(ctx.t) ? d.section.text : '',
 		}
 		const order = ['datetime', 'time', 'timecode', 'transport', 'track', 'section']
 		const prefix = order
@@ -1966,6 +2046,7 @@ class DisguiseInstance extends InstanceBase {
 		const kind = String(o.kind || 'cue').toLowerCase()
 		const text = String(o.text ?? '').trim()
 		if (!text) throw new Error('no text given')
+		this.requireLivePlayhead(t)
 		const beat = `(${Number(t.time)} * object.player.track.bpm / 60.0)`
 		const tagType = { cue: 'CUE', midi: 'MIDI', tc: 'TC' }[kind]
 		const expr =
@@ -1990,6 +2071,7 @@ class DisguiseInstance extends InstanceBase {
 		const t = this.editTransport(targets)
 		if (!t) return
 		const objectPath = this.editObjectPath(t)
+		this.requireLivePlayhead(t)
 		const sec = cuelist.sectionAt(this.cuelists.get(t.trackUid) || [], Number(t.time))
 		if (!sec) throw new Error('no section at the playhead')
 		const fade = String(o.mode || 'fade').toLowerCase() === 'fade'
@@ -2024,6 +2106,7 @@ class DisguiseInstance extends InstanceBase {
 		const objectPath = this.editObjectPath(t)
 		const seconds = Number(String(o.seconds ?? '5').replace(',', '.'))
 		if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`"${o.seconds}" is not a duration`)
+		this.requireLivePlayhead(t)
 		const mode =
 			{ none: 'DontTouchLayers', move: 'MoveLayers', stretch: 'StretchLayers' }[String(o.layers || 'move')] ||
 			'MoveLayers'
@@ -2051,6 +2134,7 @@ class DisguiseInstance extends InstanceBase {
 		const objectPath = this.editObjectPath(t)
 		// split: new boundary at the playhead. merge: remove the boundary the playhead is in (start of the current
 		// section), like Designer's own merge; a playhead exactly on a boundary removes that one.
+		this.requireLivePlayhead(t)
 		let time = Number(t.time)
 		if (String(op) === 'merge') {
 			const sec = cuelist.sectionAt(this.cuelists.get(t.trackUid) || [], time)
@@ -2196,7 +2280,14 @@ class DisguiseInstance extends InstanceBase {
 		/** @type {Map<string, TransportState[]>} section index → transports */
 		const bySection = new Map()
 		const fallback = []
+		const stale = []
 		for (const t of targets) {
+			if (!this.hasLivePlayhead(t)) {
+				// never compute a jump from an old playhead (e.g. right after a Designer restart)
+				stale.push(t)
+				fallback.push(t)
+				continue
+			}
 			const cues = this.cuelists.get(t.trackUid) || []
 			const target = cuelist.sectionByOffset(cues, t.time, delta)
 			if (target) {
@@ -2210,11 +2301,22 @@ class DisguiseInstance extends InstanceBase {
 			this.log('debug', `Jump ${delta}: ${list.map((t) => t.name).join(', ')} → section ${index}`)
 			jobs.push(api.gotoSection(list, index, playmode))
 		}
-		if (fallback.length) {
+		if (stale.length)
 			this.log(
 				'warn',
-				`Jump sections: no cuelist for ${fallback.map((t) => `${t.name} (${t.trackName || 'no track'})`).join(', ')} – using Designer's next/previous section`,
+				`Jump sections: no live playhead for ${stale.map((t) => t.name).join(', ')} – using Designer's next/previous section`,
 			)
+		if (fallback.length > stale.length)
+			this.log(
+				'warn',
+				`Jump sections: no cuelist for ${fallback
+					.filter((t) => !stale.includes(t))
+					.map((t) => `${t.name} (${t.trackName || 'no track'})`)
+					.join(', ')} – using Designer's next/previous section`,
+			)
+		if (fallback.length && delta === 0)
+			this.log('warn', `Restart section: position unknown for ${fallback.map((t) => t.name).join(', ')} – skipped`)
+		if (fallback.length) {
 			const steps = Math.abs(delta)
 			jobs.push(
 				(async () => {

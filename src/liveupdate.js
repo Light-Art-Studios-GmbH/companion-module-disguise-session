@@ -97,6 +97,11 @@ function onceExpr(key, expr) {
 }
 
 const RETRY_MS = [1000, 2000, 5000, 10000]
+/** A websocket that is not open after this time is dropped and retried (Designer can accept TCP while it starts up
+ * and never answer the upgrade – without this the reconnect hung forever, verified on r34 on 2026-10-01). */
+const CONNECT_TIMEOUT_MS = 5000
+/** Retry delays for a subscription Designer refused because the object does not exist yet (project still loading). */
+const RESUBSCRIBE_MS = [1000, 2000, 5000]
 const ONCE_INTERVAL_MS = 600000
 let onceCounter = 0
 
@@ -127,6 +132,15 @@ class LiveUpdate extends EventEmitter {
 		/** Subscribe messages are sent one at a time (Designer rejects back-to-back frames with "Invalid JSON"). */
 		this.queue = []
 		this.inflight = null
+		this.connectTimer = null
+		/** @type {Map<string, {timer: ReturnType<typeof setTimeout>|null, count: number}>} groupId → refused-subscription retry */
+		this.refused = new Map()
+	}
+
+	/** Clears all retry timers of refused subscriptions. */
+	clearRefused() {
+		for (const r of this.refused.values()) if (r.timer) clearTimeout(r.timer)
+		this.refused.clear()
 	}
 
 	/** Queues a subscribe message; the next one goes out after the reply (or 250 ms). */
@@ -205,6 +219,9 @@ class LiveUpdate extends EventEmitter {
 		this.inflight = null
 		if (this.retryTimer) clearTimeout(this.retryTimer)
 		this.retryTimer = null
+		if (this.connectTimer) clearTimeout(this.connectTimer)
+		this.connectTimer = null
+		this.clearRefused()
 		const ws = this.ws
 		this.ws = null
 		this.subscribedGroups.clear()
@@ -238,8 +255,17 @@ class LiveUpdate extends EventEmitter {
 		this.subscribedGroups.clear()
 		this.subs.clear()
 		this.pending.clear()
+		if (this.connectTimer) clearTimeout(this.connectTimer)
+		this.connectTimer = setTimeout(() => {
+			this.connectTimer = null
+			if (this.ws !== ws || ws.readyState === 1) return
+			this.emit('error', `Live Update: no answer within ${CONNECT_TIMEOUT_MS} ms – retrying`)
+			this.dropSocket(ws, 'connect timeout')
+		}, CONNECT_TIMEOUT_MS)
 		ws.onopen = () => {
 			if (this.ws !== ws) return
+			if (this.connectTimer) clearTimeout(this.connectTimer)
+			this.connectTimer = null
 			this.connected = true
 			this.retries = 0
 			this.emit('open')
@@ -254,16 +280,83 @@ class LiveUpdate extends EventEmitter {
 		}
 		ws.onclose = (ev) => {
 			if (this.ws !== ws) return
-			this.ws = null
-			this.queue = []
-			if (this.inflight) clearTimeout(this.inflight)
-			this.inflight = null
-			this.connected = false
-			this.subscribedGroups.clear()
-			this.subs.clear()
-			this.pending.clear()
-			this.emit('close', ev?.reason || `code ${ev?.code ?? '?'}`)
-			this.scheduleRetry()
+			this.dropSocket(ws, ev?.reason || `code ${ev?.code ?? '?'}`)
+		}
+	}
+
+	/**
+	 * Forgets the socket and everything bound to it, reports the close and schedules a reconnect.
+	 * @param {WebSocket} ws
+	 * @param {string} reason
+	 */
+	dropSocket(ws, reason) {
+		if (this.ws !== ws) return
+		this.ws = null
+		if (this.connectTimer) clearTimeout(this.connectTimer)
+		this.connectTimer = null
+		this.queue = []
+		if (this.inflight) clearTimeout(this.inflight)
+		this.inflight = null
+		this.clearRefused()
+		const wasConnected = this.connected
+		this.connected = false
+		this.subscribedGroups.clear()
+		this.subs.clear()
+		this.pending.clear()
+		try {
+			ws.close()
+		} catch {
+			// ignore
+		}
+		if (wasConnected || reason === 'connect timeout') this.emit('close', reason)
+		this.scheduleRetry()
+	}
+
+	/**
+	 * Drops the subscription of every group on `objectPath` and subscribes it again (watchdog for a transport whose
+	 * values stopped arriving).
+	 * @param {string} objectPath
+	 */
+	resubscribe(objectPath) {
+		const ws = this.ws
+		if (!ws || ws.readyState !== 1) return
+		const ids = []
+		for (const [subId, info] of this.subs)
+			if (info.objectPath === objectPath && !info.once) {
+				ids.push(subId)
+				this.subs.delete(subId)
+			}
+		if (ids.length) {
+			try {
+				ws.send(JSON.stringify({ unsubscribe: { ids } }))
+			} catch {
+				// ignore
+			}
+		}
+		for (const [k, info] of this.pending) if (info.objectPath === objectPath && !info.once) this.pending.delete(k)
+		for (const [id, g] of this.groups) if (g.objectPath === objectPath) this.subscribedGroups.delete(id)
+		this.syncSubscriptions()
+	}
+
+	/**
+	 * Designer refused a group's subscription (object not there yet, e.g. while a project loads): retry it.
+	 * @param {string} objectPath
+	 */
+	retryRefused(objectPath) {
+		for (const [id, g] of this.groups) {
+			if (g.objectPath !== objectPath || !this.subscribedGroups.has(id)) continue
+			this.subscribedGroups.delete(id)
+			for (const [k, info] of this.pending) if (info.objectPath === objectPath && !info.once) this.pending.delete(k)
+			const r = this.refused.get(id) || { timer: null, count: 0 }
+			if (r.timer) clearTimeout(r.timer)
+			const delay = RESUBSCRIBE_MS[Math.min(r.count, RESUBSCRIBE_MS.length - 1)]
+			r.count++
+			r.timer = setTimeout(() => {
+				r.timer = null
+				this.syncSubscriptions()
+			}, delay)
+			this.refused.set(id, r)
+			if (r.count === 1) this.emit('refused', objectPath)
 		}
 	}
 
@@ -386,7 +479,7 @@ class LiveUpdate extends EventEmitter {
 				if (info?.once) {
 					this.pending.delete(`${m[1]}|${m[2]}`)
 					info.once({ errorType: 'subscribeError', message: msg.error })
-				}
+				} else if (info && /Unable to find object/i.test(String(msg.error))) this.retryRefused(m[1])
 			}
 			return
 		}
@@ -398,6 +491,11 @@ class LiveUpdate extends EventEmitter {
 				if (!info) continue
 				this.pending.delete(k)
 				this.subs.set(Number(s.id), info)
+				const r = this.refused.get(`${info.tag}|${info.objectPath}`)
+				if (r && !info.once) {
+					if (r.timer) clearTimeout(r.timer)
+					this.refused.delete(`${info.tag}|${info.objectPath}`)
+				}
 				if (info.onId) info.onId(Number(s.id))
 			}
 			return

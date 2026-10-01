@@ -143,6 +143,10 @@ full group per transport.
 
 ### Troubleshooting
 
+**After a Designer restart** the module reconnects on its own as soon as Designer answers again. Until the playhead
+arrives, section jumps use Designer's own next / previous section and the edit tools that write at the playhead
+report "no live playhead … try again".
+
 **The module is not in Companion's module list** – it has not been added to the official list yet. Until then, add it
 through Companion's developer modules folder or import the package from the GitHub release.
 

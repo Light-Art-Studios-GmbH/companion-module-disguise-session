@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1 – 2026-10-01
+
+- Fixed: after Designer was restarted, Live Update could stay disconnected, so section jumps (next / previous / back /
+  forward) were computed from an old playhead and landed on the wrong section, and the time displays stood still.
+  The websocket now gives up a connection attempt that is not answered within 5 seconds and retries, subscriptions
+  that Designer refuses while a project is loading are retried, and a watchdog resubscribes a transport whose
+  playhead does not arrive. After a reconnect the session is re-read.
+- Safety: without a live playhead, section jumps use Designer's own next / previous section, and the tools that
+  write at the playhead (new layer, paste, fade here, tags, notes, split / merge, crossfade, insert time) refuse to
+  run instead of writing at a wrong position.
+
 ## 1.2.0 – 2026-09-25
 
 - New action **Project: save and backup** – saves the project and writes a backup, like Alt+W in Designer. Save mode
