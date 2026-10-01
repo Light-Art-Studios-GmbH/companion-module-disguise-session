@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.2 – 2026-10-01
+
+- Fixed: a transport key could show the old state (play mode, engaged, volume, brightness) for up to 10 seconds when
+  a session refresh answered just after the key was pressed. While Live Update delivers a transport, the refresh no
+  longer overwrites these values.
+- Only variables that actually changed are sent to Companion (about 16 instead of 76 values per frame for a playing
+  transport) – noticeably lighter on small Companion hosts such as a Raspberry Pi.
+- If Designer reports a play-mode code the module does not know, the module keeps the last known mode and logs the
+  code once as a warning, so it can be added.
+
 ## 1.2.1 – 2026-10-01
 
 - Fixed: after Designer was restarted, Live Update could stay disconnected, so section jumps (next / previous / back /

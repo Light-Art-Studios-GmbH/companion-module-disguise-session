@@ -462,6 +462,7 @@ class DisguiseInstance extends InstanceBase {
 			this.live.stop()
 		}
 		this.liveDownSince = 0
+		this.sentVariables = new Map()
 		this.live = null
 		this.api = null
 		this.session.connected = false
@@ -764,10 +765,15 @@ class DisguiseInstance extends InstanceBase {
 				this.transports.set(uid, t)
 			}
 			t.name = String(raw.name ?? t.name)
-			t.engaged = !!raw.engaged
-			if (typeof raw.volume === 'number') t.volume = raw.volume
-			if (typeof raw.brightness === 'number') t.brightness = raw.brightness
-			if (raw.playmode) t.playmode = normalizePlayMode(raw.playmode) === 'NotSet' ? t.playmode : String(raw.playmode)
+			// Live Update owns engaged / volume / brightness / play mode. Designer only sends changes, so a REST answer
+			// that was requested before a key press and arrives after the live change would otherwise put the old
+			// state back – and keep it until the next poll. REST fills these only while no live data arrives.
+			if (!this.hasLivePlayhead(t)) {
+				t.engaged = !!raw.engaged
+				if (typeof raw.volume === 'number') t.volume = raw.volume
+				if (typeof raw.brightness === 'number') t.brightness = raw.brightness
+				if (raw.playmode) t.playmode = normalizePlayMode(raw.playmode) === 'NotSet' ? t.playmode : String(raw.playmode)
+			}
 			if (typeof raw.speed === 'number') t.speed = raw.speed
 			t.receivingTimecode = !!raw.receivingTimecode
 			if (raw.currentTrack?.uid) {
@@ -1059,7 +1065,7 @@ class DisguiseInstance extends InstanceBase {
 			}
 			for (const [id] of MACHINE_VARS) values[`m_${m.key}_${id}`] = snap[id]
 		}
-		this.setVariableValues(values)
+		this.sendVariables(values)
 	}
 
 	// ────────────────────────────────────────────────────────────── definitions
@@ -1069,9 +1075,38 @@ class DisguiseInstance extends InstanceBase {
 	 * session's transports or tracks change (dropdown choices, per-transport variables and presets).
 	 * @param {boolean} initial
 	 */
+	/**
+	 * Sends only the variables whose value changed since the last send (a playing transport changes ~10 of its 38
+	 * variables per frame) – far less work for the Companion host, identical result.
+	 * @param {Record<string, unknown>} values
+	 */
+	sendVariables(values) {
+		if (!this.sentVariables) this.sentVariables = new Map()
+		/** @type {Record<string, unknown>} */
+		const changed = {}
+		let any = false
+		for (const [id, value] of Object.entries(values)) {
+			if (this.sentVariables.has(id) && this.sentVariables.get(id) === value) continue
+			this.sentVariables.set(id, value)
+			changed[id] = value
+			any = true
+		}
+		if (any) this.setVariableValues(changed)
+	}
+
+	/** After a definition change: forget what was sent and send every variable again. */
+	republishAll() {
+		this.sentVariables = new Map()
+		this.publishGlobals()
+		this.publishMachines()
+		for (const t of this.transports.values()) this.publishTransport(t, true)
+	}
+
 	rebuildDefinitions(initial) {
 		if (this.destroyed) return
 		this.setVariableDefinitions(getVariableDefinitions(this))
+		if (!initial) this.republishAll()
+		else this.sentVariables = new Map()
 		this.setActionDefinitions(getActionDefinitions(this))
 		this.setFeedbackDefinitions(getFeedbackDefinitions(this))
 		this.publishPresets()
@@ -1217,6 +1252,18 @@ class DisguiseInstance extends InstanceBase {
 			if (mode && mode !== t.playmode) {
 				t.playmode = mode
 				stateChanged = true
+			} else if (!mode) {
+				// Designer reported a play-mode code the module does not know (seen briefly on r34): keep the last known
+				// mode and log the code once, so it can be mapped
+				if (!this.unknownPlayStates) this.unknownPlayStates = new Set()
+				const code = JSON.stringify(v.state)
+				if (!this.unknownPlayStates.has(code)) {
+					this.unknownPlayStates.add(code)
+					this.log(
+						'warn',
+						`Live Update: unknown play mode code ${code} on ${t.name} – keeping "${t.playmode}". Please report this code.`,
+					)
+				}
 			}
 		}
 		if ('engaged' in v && t.engaged !== !!v.engaged) {
@@ -1504,7 +1551,7 @@ class DisguiseInstance extends InstanceBase {
 			const members = this.membersOf(m)
 			put(m.key, { ...snap, engaged: m.engaged, playing: members.some((x) => x.playing) })
 		}
-		this.setVariableValues(values)
+		this.sendVariables(values)
 
 		if (force) this.checkFeedbacks(...STATE_FEEDBACKS)
 		if (force || posChanged) this.checkFeedbacks(...POSITION_FEEDBACKS)
@@ -1518,7 +1565,7 @@ class DisguiseInstance extends InstanceBase {
 	publishGlobals() {
 		if (this.destroyed) return
 		const active = this.transports.get(this.activeUid)
-		this.setVariableValues({
+		this.sendVariables({
 			connected: this.session.connected,
 			project: this.projectName,
 			designer_version: this.session.version,
